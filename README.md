@@ -1,3 +1,6 @@
+## BW México 2017
+This repository was created for the mexican students who will be participating in MIT's Beaver Works Autonomous-Racecar Competition  of 2017.
+
 # racecar
 Run the following commands in the shell screipt(open it bye clicking: ctrl + alt + t)
 To setup git: 
