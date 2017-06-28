@@ -1,10 +1,12 @@
 # racecar
+Run the following commands in the shell screipt(open it bye clicking: ctrl + alt + t)
 To setup git: 
 ```
 git config --global user.email "yourmail@you.com"
 git config --global user.name "Your Github Name(not username)"`
+git config --global credential.helper "cache --timeout=36000"
 ```
-Run the following commands in the shell screipt(open it bye clicking: ctrl + alt + t)to add this repository to the racecar vm:
+To add this repository to the racecar vm:
 ```
 cd ~/racecar-ws/
 wstool set src/racecar-mex --git "https://github.com/AndresGalaviz/racecar-mex"
