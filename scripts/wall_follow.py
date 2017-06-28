@@ -70,12 +70,14 @@ class WallFollow():
         self.direction_muliplier = 0
         self.laser_angles = None
         
-    def fit_line(self):
+    def fit_line(self, i):
         if self.received_data and self.xs.shape[0] > 0:
             # fit line to euclidean space laser data in the window of interest
             slope, intercept, r_val, p_val, std_err = stats.linregress(self.xs,self.ys)
             self.m = slope
             self.c = intercept
+            rospy.loginfo( "%d: SLOPE: %d INTERCEPT: %d ", i, slope, intercept)
+            
 
     def lidarCB(self, msg):
         if not self.received_data:
@@ -102,22 +104,25 @@ class WallFollow():
         filtered_ranges = signal.medfilt(ranges, MEDIAN_FILTER_SIZE)
 
         # apply a window function to isolate values to the side of the car
-        window = (angles > self.min_angle) & (angles < self.max_angle)
-        filtered_ranges = filtered_ranges[window]
-        filtered_angles = angles[window]
+        window = [((angles > self.min_angle) & (angles <= 0)), ((angles < self.max_angle) & (angles  > 0))]
+        i = 0
+        for win in window:
+            filtered_ranges_loc = filtered_ranges[win]
+            filtered_angles_loc = angles[win]
 
-        # convert from polar to euclidean coordinate space
-        self.ys = filtered_ranges * np.cos(filtered_angles)
-        self.xs = filtered_ranges * np.sin(filtered_angles)
+            # convert from polar to euclidean coordinate space
+            self.ys = filtered_ranges_loc * np.cos(filtered_angles_loc)
+            self.xs = filtered_ranges_loc * np.sin(filtered_angles_loc)
 
-        self.fit_line()
+            self.fit_line(i)
+            i += 1
         self.compute_pd_control()
 
         # filter lidar data to clean it up and remove outlisers
         self.received_data = True
 
     def compute_pd_control(self):
-	    print "computing control"
+	    rospy.loginfo("\n")
 
 def getKey():
     tty.setraw(sys.stdin.fileno())
