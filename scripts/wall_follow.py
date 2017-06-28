@@ -111,7 +111,7 @@ class WallFollow():
         self.xs = filtered_ranges * np.sin(filtered_angles)
 
         self.fit_line()
-        self.compute_pd_control()
+        #self.compute_pd_control()
 
         # filter lidar data to clean it up and remove outlisers
         self.received_data = True
