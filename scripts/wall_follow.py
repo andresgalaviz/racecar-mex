@@ -56,7 +56,8 @@ class WallFollow():
 
     # given line parameters cached in the self object, compute the pid control
     def compute_pd_control(self):
-        print "compute pd control"
+        # print "compute pd control"
+        print ""
 
     def fit_line(self):
         if self.received_data and self.xs.shape[0] > 0:
@@ -96,11 +97,19 @@ class WallFollow():
         window = (angles > self.min_angle) & (angles < self.max_angle)
         filtered_ranges = filtered_ranges[window]
         filtered_angles = angles[window]
+        print "ANGLES: "
+        print filtered_angles
+        print "RANGES: "
+        print filtered_ranges
 
         # convert from polar to euclidean coordinate space
         self.ys = filtered_ranges * np.cos(filtered_angles)
         self.xs = -1*filtered_ranges * np.sin(filtered_angles)
-        
+
+        for i in range(len(self.ys)):
+            print "%.4f, %.4f"%(self.xs[i], self.ys[i])
+
+
         self.fit_line()
         self.compute_pd_control()
 
