@@ -76,7 +76,7 @@ class WallFollow():
             slope, intercept, r_val, p_val, std_err = stats.linregress(self.xs,self.ys)
             self.m = slope
             self.c = intercept
-            rospy.loginfo( "%d: SLOPE: %d INTERCEPT: %d ", i, slope, intercept)
+            print "%d: SLOPE: %.5f INTERCEPT: %.5f "% (i, slope, intercept),
             
 
     def lidarCB(self, msg):
@@ -122,10 +122,10 @@ class WallFollow():
         self.received_data = True
 
     def compute_pd_control(self):
-	    rospy.loginfo("\n")
+	    print ""
 
 def getKey():
-    tty.setraw(sys.stdin.fileno())
+    tty.setcbreak(sys.stdin.fileno())
     select.select([sys.stdin], [], [], 0)
     key = sys.stdin.read(1)
     termios.tcsetattr(sys.stdin, termios.TCSADRAIN, settings)
