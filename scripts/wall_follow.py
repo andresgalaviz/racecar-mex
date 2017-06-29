@@ -13,6 +13,8 @@ from geometry_msgs.msg import Polygon, Point32, PolygonStamped
 
 RIGHT = 'right'
 LEFT  = 'left'
+BOTH = 'both'
+
 
 SHOW_VIS = False
 FAN_ANGLE = np.pi/5.0
@@ -54,6 +56,8 @@ class WallFollow():
         self.direction_muliplier = 0
         self.laser_angles = None
 
+        self.center_angles = [(-math.pi /2), 0, (math.pi/2)]
+
     # given line parameters cached in the self object, compute the pid control
     def compute_pd_control(self):
         # print "compute pd control"
@@ -65,54 +69,46 @@ class WallFollow():
             slope, intercept, r_val, p_val, std_err = stats.linregress(self.xs,self.ys)
             self.m = slope
             self.c = intercept
+        # print "SLOPE: %.4f"%(self.m)
+        # print "INTERCEPT: %.4f"%(self.c)
             
     # window the data, compute the line fit and associated control
     def lidarCB(self, msg):
         if not self.received_data:
             rospy.loginfo("success! first message received")
-
-            # populate cached constants
-            if self.direction == RIGHT:
-                center_angle = -math.pi / 2
-                self.direction_muliplier = -1
-            else:
-                center_angle = math.pi / 2
-                self.direction_muliplier = 1
-
-            self.min_angle = center_angle - FAN_ANGLE
-            self.max_angle = center_angle + FAN_ANGLE
             self.laser_angles = (np.arange(len(msg.ranges)) * msg.angle_increment) + msg.angle_min
 
-        self.data = msg.ranges
-        values = np.array(msg.ranges)
+        for center_angle in self.center_angles:
+            self.min_angle = center_angle - FAN_ANGLE
+            self.max_angle = center_angle + FAN_ANGLE
+                
+            self.data = msg.ranges
+            values = np.array(msg.ranges)
 
-        # remove out of range values
-        ranges = values[(values > msg.range_min) & (values < msg.range_max)]
-        angles = self.laser_angles[(values > msg.range_min) & (values < msg.range_max)]
+            # remove out of range values
+            ranges = values[(values > msg.range_min) & (values < msg.range_max)]
+            angles = self.laser_angles[(values > msg.range_min) & (values < msg.range_max)]
 
-        # apply median filter to clean outliers
-        filtered_ranges = signal.medfilt(ranges, MEDIAN_FILTER_SIZE)
+            # apply median filter to clean outliers
+            filtered_ranges = signal.medfilt(ranges, MEDIAN_FILTER_SIZE)
 
-        # apply a window function to isolate values to the side of the car
-        window = (angles > self.min_angle) & (angles < self.max_angle)
-        filtered_ranges = filtered_ranges[window]
-        filtered_angles = angles[window]
-        print "ANGLES: "
-        print filtered_angles
-        print "RANGES: "
-        print filtered_ranges
+            # apply a window function to isolate values to the side of the car
+            window = (angles > self.min_angle) & (angles < self.max_angle)
+            filtered_ranges = filtered_ranges[window]
+            filtered_angles = angles[window]
+            print "%.4f : "% center_angle, filtered_ranges[0], filtered_ranges[len(filtered_ranges)-1]
 
-        # convert from polar to euclidean coordinate space
-        self.ys = filtered_ranges * np.cos(filtered_angles)
-        self.xs = -1*filtered_ranges * np.sin(filtered_angles)
+            # convert from polar to euclidean coordinate space
+            self.ys = filtered_ranges * np.cos(filtered_angles)
+            self.xs = -1*filtered_ranges * np.sin(filtered_angles)
 
-        for i in range(len(self.ys)):
-            print "%.4f, %.4f"%(self.xs[i], self.ys[i])
+            # for i in range(len(self.ys)):
+            #     print "%.4f, %.4f"%(self.xs[i], self.ys[i])
 
 
-        self.fit_line()
-        self.compute_pd_control()
-
+            self.fit_line()
+            self.compute_pd_control()
+        print ""
         # filter lidar data to clean it up and remove outlisers
         self.received_data = True
 
