@@ -11,15 +11,12 @@ import matplotlib.pyplot as plt
 import math
 from geometry_msgs.msg import Polygon, Point32, PolygonStamped
 
-RIGHT = 'right'
-LEFT  = 'left'
-BOTH = 'both'
-
+PUBLISH_LINE = True
 
 SHOW_VIS = False
 FAN_ANGLE = np.pi/5.0
 TARGET_DISTANCE = 1.0
-MEDIAN_FILTER_SIZE=141
+MEDIAN_FILTER_SIZE = 141
 KP = 0.4 # distance term
 KD = 0.3  # angle term
 # KD = 0.5  # angle term
@@ -37,6 +34,8 @@ class WallFollow():
                 AckermannDriveStamped, queue_size =1 )
         self.sub = rospy.Subscriber("/scan", LaserScan, self.lidarCB, queue_size=1)
         
+        if PUBLISH_LINE:
+            self.line_pub = rospy.Publisher("/viz/line_fit", PolygonStamped, queue_size =1 )
         # computed control instructions
         self.control = None
 
@@ -49,7 +48,7 @@ class WallFollow():
         
         # flag to indicate the first laser scan has been received
         self.received_data = False
-        
+
         # cached constants
         self.min_angle = None
         self.max_angle = None
@@ -81,7 +80,7 @@ class WallFollow():
         for center_angle in self.center_angles:
             self.min_angle = center_angle - FAN_ANGLE
             self.max_angle = center_angle + FAN_ANGLE
-                
+
             self.data = msg.ranges
             values = np.array(msg.ranges)
 
@@ -96,21 +95,47 @@ class WallFollow():
             window = (angles > self.min_angle) & (angles < self.max_angle)
             filtered_ranges = filtered_ranges[window]
             filtered_angles = angles[window]
-            print "%.4f : "% center_angle, filtered_ranges[0], filtered_ranges[len(filtered_ranges)-1]
 
             # convert from polar to euclidean coordinate space
             self.ys = filtered_ranges * np.cos(filtered_angles)
-            self.xs = -1*filtered_ranges * np.sin(filtered_angles)
+            self.xs = -1 * filtered_ranges * np.sin(filtered_angles)
 
             # for i in range(len(self.ys)):
             #     print "%.4f, %.4f"%(self.xs[i], self.ys[i])
 
-
             self.fit_line()
             self.compute_pd_control()
-        print ""
+            if PUBLISH_LINE:
+                self.publish_line()
+
         # filter lidar data to clean it up and remove outlisers
         self.received_data = True
+
+    def publish_line(self):
+        # find the two points that intersect between the fan angle lines and the found y=mx+c line
+        x0 = self.c / (np.tan(FAN_ANGLE) - self.m)
+        x1 = self.c / (-np.tan(FAN_ANGLE) - self.m)
+
+        y0 = self.m*x0+self.c
+        y1 = self.m*x1+self.c
+
+        poly = Polygon()
+        p0 = Point32()
+        p0.y = x0
+        p0.x = y0
+
+        p1 = Point32()
+        p1.y = x1
+        p1.x = y1
+        poly.points.append(p0)
+        poly.points.append(p1)
+
+        polyStamped = PolygonStamped()
+        polyStamped.header.frame_id = "base_link"
+        polyStamped.polygon = poly
+
+        self.line_pub.publish(polyStamped)
+
 
 if __name__=="__main__":
     rospy.init_node("wall_follow")
