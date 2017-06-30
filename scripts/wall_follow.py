@@ -1,8 +1,6 @@
 #!/usr/bin/env python
+
 import rospy
-
-import sys, select, termios, tty
-
 from std_msgs.msg import String, Header
 import numpy as np
 from threading import Thread #imsosorry
@@ -13,46 +11,33 @@ import matplotlib.pyplot as plt
 import math
 from geometry_msgs.msg import Polygon, Point32, PolygonStamped
 
-
-RIGHT = 'right'
-LEFT  = 'left'
+PUBLISH_LINE = True
 
 SHOW_VIS = False
 FAN_ANGLE = np.pi/5.0
 TARGET_DISTANCE = 1.0
-MEDIAN_FILTER_SIZE=141
+MEDIAN_FILTER_SIZE = 141
 KP = 0.4 # distance term
 KD = 0.3  # angle term
 # KD = 0.5  # angle term
-PUBLISH_LINE = True
-HISTORY_SIZE = 5 # Size of the circular array for smoothing steering commands
-PUBLISH_RATE = 20.0 # number of control commands to publish per second
-SPEED = 1.0
 
 EPSILON = 0.000001
 
-banner = """
-Reading from the keyboard  and Publishing to AckermannDriveStamped!
----------------------------
-Moving around:
-        w
-   a    s    d
-anything else : stop
-CTRL-C to quit
-"""
-
-keyBindings = {
-  'w':(1,0),
-  'd':(1,-1),
-  'a':(1,1),
-  's':(-1,0),
-}
-
 class WallFollow():
-    def __init__(self):
-        self.pub = rospy.Publisher("/vesc/high_level/ackermann_cmd_mux/input/nav_0",\
+    def __init__(self, direction):
+        if direction not in [RIGHT, LEFT]:
+            rospy.loginfo("incorect %s wall selected.  choose left or right")
+            rospy.signal_shutdown()
+        self.direction = direction
+        
+        self.pub = rospy.Publisher("/vesc/ackermann_cmd_mux/input/teleop",\
                 AckermannDriveStamped, queue_size =1 )
         self.sub = rospy.Subscriber("/scan", LaserScan, self.lidarCB, queue_size=1)
+        
+        if PUBLISH_LINE:
+            self.line_pub = rospy.Publisher("/viz/line_fit", PolygonStamped, queue_size =1 )
+        # computed control instructions
+        self.control = None
 
         # containers for laser scanner related data
         self.data = None
@@ -60,7 +45,7 @@ class WallFollow():
         self.ys = None
         self.m = 0
         self.c = 0
-
+        
         # flag to indicate the first laser scan has been received
         self.received_data = False
 
@@ -69,116 +54,90 @@ class WallFollow():
         self.max_angle = None
         self.direction_muliplier = 0
         self.laser_angles = None
-        
+
+        self.center_angles = [(-math.pi /2), 0, (math.pi/2)]
+
+    # given line parameters cached in the self object, compute the pid control
+    def compute_pd_control(self):
+        # print "compute pd control"
+        print ""
+
     def fit_line(self):
         if self.received_data and self.xs.shape[0] > 0:
             # fit line to euclidean space laser data in the window of interest
             slope, intercept, r_val, p_val, std_err = stats.linregress(self.xs,self.ys)
             self.m = slope
             self.c = intercept
-
+        # print "SLOPE: %.4f"%(self.m)
+        # print "INTERCEPT: %.4f"%(self.c)
+            
+    # window the data, compute the line fit and associated control
     def lidarCB(self, msg):
         if not self.received_data:
-            #rospy.loginfo("success! first message received")
-
-            # populate cached constants
-            center_angle = 0
-
-            self.min_angle = center_angle - FAN_ANGLE
-            self.max_angle = center_angle + FAN_ANGLE
+            rospy.loginfo("success! first message received")
             self.laser_angles = (np.arange(len(msg.ranges)) * msg.angle_increment) + msg.angle_min
 
-        #-2.09439992905 2.09439992905 0.00387851847336 0.10000000149 10.0 1081
-        #msg.angle_min, msg.angle_max, msg.angle_increment, msg.range_min, msg.range_max, len(msg.ranges)
+        for center_angle in self.center_angles:
+            self.min_angle = center_angle - FAN_ANGLE
+            self.max_angle = center_angle + FAN_ANGLE
 
-        self.data = msg.ranges
-        values = np.array(msg.ranges)
+            self.data = msg.ranges
+            values = np.array(msg.ranges)
 
-        # remove out of range values
-        ranges = values[(values > msg.range_min) & (values < msg.range_max)]
-        angles = self.laser_angles[(values > msg.range_min) & (values < msg.range_max)]
+            # remove out of range values
+            ranges = values[(values > msg.range_min) & (values < msg.range_max)]
+            angles = self.laser_angles[(values > msg.range_min) & (values < msg.range_max)]
 
-        # apply median filter to clean outliers
-        filtered_ranges = signal.medfilt(ranges, MEDIAN_FILTER_SIZE)
+            # apply median filter to clean outliers
+            filtered_ranges = signal.medfilt(ranges, MEDIAN_FILTER_SIZE)
 
-        # apply a window function to isolate values to the side of the car
-        window = (angles > self.min_angle) & (angles < self.max_angle)
-        filtered_ranges = filtered_ranges[window]
-        filtered_angles = angles[window]
+            # apply a window function to isolate values to the side of the car
+            window = (angles > self.min_angle) & (angles < self.max_angle)
+            filtered_ranges = filtered_ranges[window]
+            filtered_angles = angles[window]
 
-        # convert from polar to euclidean coordinate space
-        self.ys = filtered_ranges * np.cos(filtered_angles)
-        self.xs = filtered_ranges * np.sin(filtered_angles)
+            # convert from polar to euclidean coordinate space
+            self.ys = filtered_ranges * np.cos(filtered_angles)
+            self.xs = -1 * filtered_ranges * np.sin(filtered_angles)
 
-        self.fit_line()
-        self.compute_pd_control()
+            # for i in range(len(self.ys)):
+            #     print "%.4f, %.4f"%(self.xs[i], self.ys[i])
+
+            self.fit_line()
+            self.compute_pd_control()
+            if PUBLISH_LINE:
+                self.publish_line()
 
         # filter lidar data to clean it up and remove outlisers
         self.received_data = True
 
-    def compute_pd_control(self):
-	    print "computing control"
+    def publish_line(self):
+        # find the two points that intersect between the fan angle lines and the found y=mx+c line
+        x0 = self.c / (np.tan(FAN_ANGLE) - self.m)
+        x1 = self.c / (-np.tan(FAN_ANGLE) - self.m)
 
-def getKey():
-    tty.setraw(sys.stdin.fileno())
-    select.select([sys.stdin], [], [], 0)
-    key = sys.stdin.read(1)
-    termios.tcsetattr(sys.stdin, termios.TCSADRAIN, settings)
-    return key
+        y0 = self.m*x0+self.c
+        y1 = self.m*x1+self.c
 
-speed = 0.5
-turn = 0.25
+        poly = Polygon()
+        p0 = Point32()
+        p0.y = x0
+        p0.x = y0
 
-def vels(speed,turn):
-    return "currently:\tspeed %s\tturn %s " % (speed,turn)
+        p1 = Point32()
+        p1.y = x1
+        p1.x = y1
+        poly.points.append(p0)
+        poly.points.append(p1)
+
+        polyStamped = PolygonStamped()
+        polyStamped.header.frame_id = "base_link"
+        polyStamped.polygon = poly
+
+        self.line_pub.publish(polyStamped)
+
 
 if __name__=="__main__":
-    WallFollow()
-    settings = termios.tcgetattr(sys.stdin)
-
-    pub = rospy.Publisher('/vesc/ackermann_cmd_mux/input/teleop', AckermannDriveStamped, queue_size = 0)
-    rospy.init_node('keyop')
-
-    x = 0
-    th = 0
-    status = 0
-
-    try:
-        while 1:
-            key = getKey()
-            if key in keyBindings.keys():
-                x = keyBindings[key][0]
-                th = keyBindings[key][1]
-            else:
-                x = 0
-                th = 0
-                if key == '\x03':
-                    break
-            msg = AckermannDriveStamped()
-            msg.header.stamp = rospy.Time.now()
-            msg.header.frame_id = "base_link"
-
-            msg.drive.speed = x*speed
-            msg.drive.acceleration = 1
-            msg.drive.jerk = 1
-            msg.drive.steering_angle = th*turn
-            msg.drive.steering_angle_velocity = 1
-
-            pub.publish(msg)
-
-    except:
-        print 'error'
-
-    finally:
-        msg = AckermannDriveStamped()
-        msg.header.stamp = rospy.Time.now()
-        msg.header.frame_id = "base_link"
-
-        msg.drive.speed = 0
-        msg.drive.acceleration = 1
-        msg.drive.jerk = 1
-        msg.drive.steering_angle = 0
-        msg.drive.steering_angle_velocity = 1
-        pub.publish(msg)
-
-        termios.tcsetattr(sys.stdin, termios.TCSADRAIN, settings)
+    rospy.init_node("wall_follow")
+    WallFollow(RIGHT)
+    rospy.spin()
