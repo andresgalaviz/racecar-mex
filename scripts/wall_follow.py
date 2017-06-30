@@ -14,7 +14,7 @@ from geometry_msgs.msg import Polygon, Point32, PolygonStamped
 PUBLISH_LINE = True
 
 SHOW_VIS = False
-FAN_ANGLE = np.pi/5.0
+FAN_ANGLE = np.pi/4.0
 TARGET_DISTANCE = 1.0
 MEDIAN_FILTER_SIZE = 141
 KP = 0.4 # distance term
@@ -31,7 +31,6 @@ class WallFollow():
 
         self.center_angles = [(-math.pi /2), 0, (math.pi/2)]
 
-    
         self.line_pub = [None]*len(self.center_angles)
 
         # containers for laser scanner related data
@@ -60,9 +59,27 @@ class WallFollow():
 
     # given line parameters cached in the self object, compute the pid control
     def compute_pd_control(self):
-        # print "compute pd control"
-        # print ""
-        return
+        if self.received_data:
+            # given the computed wall slope, compute theta, avoid divide by zero error
+            if np.abs(self.m) < EPSILON:
+                theta = 0
+                x_intercept = 0
+            else:
+                theta = np.arctan(self.m)
+                # solve for y=0 in y=mx+c
+                x_intercept = self.c / self.m
+
+            # x axis is perp. to robot but not perpindicular to wall
+            # sine term solves for minimum distance to wall
+            wall_dist = np.abs(np.sin(theta)*x_intercept)
+            #print self.min_angle, ": ", wall_dist
+
+            # control proportional to angular error and distance from wall
+            distance_term = self.direction_muliplier * KP * (wall_dist - TARGET_DISTANCE)
+            angle_term = KD * theta
+            control = angle_term + distance_term
+            # avoid turning too sharply
+            self.control = (np.clip(control, -0.3, 0.3), SPEED)
 
     def fit_line(self):
         if self.received_data and self.xs.shape[0] > 0:
@@ -72,7 +89,7 @@ class WallFollow():
             self.c = intercept
         # print "SLOPE: %.4f"%(self.m)
         # print "INTERCEPT: %.4f"%(self.c)
-            
+
     # window the data, compute the line fit and associated control
     def lidarCB(self, msg):
         if not self.received_data:
@@ -100,7 +117,7 @@ class WallFollow():
 
             # convert from polar to euclidean coordinate space
             self.ys = filtered_ranges * np.cos(filtered_angles)
-            self.xs = -1 * filtered_ranges * np.sin(filtered_angles)
+            self.xs = filtered_ranges * np.sin(filtered_angles)
 
             # for i in range(len(self.ys)):
             #     print "%.4f, %.4f"%(self.xs[i], self.ys[i])
@@ -115,7 +132,7 @@ class WallFollow():
 
     def publish_line(self, i):
         # find the two points that intersect between the fan angle lines and the found y=mx+c line
-        
+
         x0 = self.c / (np.tan(FAN_ANGLE) - self.m)
         x1 = self.c / (-np.tan(FAN_ANGLE) - self.m)
 
@@ -136,8 +153,7 @@ class WallFollow():
         polyStamped = PolygonStamped()
         polyStamped.header.frame_id = "base_link"
         polyStamped.polygon = poly
-        
-        
+
         self.line_pub[i].publish(polyStamped)
 
 
