@@ -24,20 +24,15 @@ KD = 0.3  # angle term
 EPSILON = 0.000001
 
 class WallFollow():
-    def __init__(self, direction):
-        if direction not in [RIGHT, LEFT]:
-            rospy.loginfo("incorect %s wall selected.  choose left or right")
-            rospy.signal_shutdown()
-        self.direction = direction
-        
+    def __init__(self):
         self.pub = rospy.Publisher("/vesc/ackermann_cmd_mux/input/teleop",\
                 AckermannDriveStamped, queue_size =1 )
         self.sub = rospy.Subscriber("/scan", LaserScan, self.lidarCB, queue_size=1)
-        
-        if PUBLISH_LINE:
-            self.line_pub = rospy.Publisher("/viz/line_fit", PolygonStamped, queue_size =1 )
-        # computed control instructions
-        self.control = None
+
+        self.center_angles = [(-math.pi /2), 0, (math.pi/2)]
+
+    
+        self.line_pub = [None]*len(self.center_angles)
 
         # containers for laser scanner related data
         self.data = None
@@ -45,22 +40,29 @@ class WallFollow():
         self.ys = None
         self.m = 0
         self.c = 0
-        
+
         # flag to indicate the first laser scan has been received
         self.received_data = False
 
         # cached constants
         self.min_angle = None
         self.max_angle = None
-        self.direction_muliplier = 0
         self.laser_angles = None
 
-        self.center_angles = [(-math.pi /2), 0, (math.pi/2)]
+        if PUBLISH_LINE:
+            for i in range(len(self.center_angles)):
+                for i in range(len(self.center_angles)):
+                    self.line_pub[i] = rospy.Publisher("/viz/line_fit_%d"%i, PolygonStamped, queue_size =1 )
+        # computed control instructions
+        self.control = None
+
+
 
     # given line parameters cached in the self object, compute the pid control
     def compute_pd_control(self):
         # print "compute pd control"
-        print ""
+        # print ""
+        return
 
     def fit_line(self):
         if self.received_data and self.xs.shape[0] > 0:
@@ -77,7 +79,7 @@ class WallFollow():
             rospy.loginfo("success! first message received")
             self.laser_angles = (np.arange(len(msg.ranges)) * msg.angle_increment) + msg.angle_min
 
-        for center_angle in self.center_angles:
+        for i, center_angle in enumerate(self.center_angles):
             self.min_angle = center_angle - FAN_ANGLE
             self.max_angle = center_angle + FAN_ANGLE
 
@@ -106,13 +108,14 @@ class WallFollow():
             self.fit_line()
             self.compute_pd_control()
             if PUBLISH_LINE:
-                self.publish_line()
+                self.publish_line(i)
 
         # filter lidar data to clean it up and remove outlisers
         self.received_data = True
 
-    def publish_line(self):
+    def publish_line(self, i):
         # find the two points that intersect between the fan angle lines and the found y=mx+c line
+        
         x0 = self.c / (np.tan(FAN_ANGLE) - self.m)
         x1 = self.c / (-np.tan(FAN_ANGLE) - self.m)
 
@@ -133,11 +136,12 @@ class WallFollow():
         polyStamped = PolygonStamped()
         polyStamped.header.frame_id = "base_link"
         polyStamped.polygon = poly
-
-        self.line_pub.publish(polyStamped)
+        
+        
+        self.line_pub[i].publish(polyStamped)
 
 
 if __name__=="__main__":
     rospy.init_node("wall_follow")
-    WallFollow(RIGHT)
+    WallFollow()
     rospy.spin()
