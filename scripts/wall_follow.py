@@ -1,15 +1,15 @@
 #!/usr/bin/env python
-
 import rospy
 import tf
+import math
 import numpy as np
 from std_msgs.msg import String, Header
 from ackermann_msgs.msg import AckermannDriveStamped, AckermannDrive
 from sensor_msgs.msg import LaserScan
 
 KP = 0.4
-KD = 0.3
-SPEED = .8
+KD = 1.1
+SPEED = 1
 SPEED_INCREMENT = 2.0
 
 class WallFollow():
@@ -25,23 +25,19 @@ class WallFollow():
         self.Data_size_sides_S = 320
         self.Safe_distance = .7
         self.Wall_distance = 0
-        self.One_time = True 
+        self.One_time = True
 
     def control(self, RD, LD, FD):
-        '''
-        Error = LD - RD
+        #Error = LD - RD
         #Use just one wall if there is just one wall
-        if LD > self.Wall_distance: 
+        if self.Direction == "Right": 
             Error = self.Target_distance - RD
-        elif RD > self.Wall_distance:
+            move = True
+        elif self.Direction == "Left":
             Error = LD - self.Target_distance
+            move = True
         else:
-            if Error > 0:
-                self.Target_distance = LD - Error
-            else:
-                self.Target_distance = LD + Error
-        '''
-        Error = LD - self.Target_distance
+            move = False
         Slope = self.Previous_error - Error
         Target_angle = Error * KP + Slope * KD
 
@@ -55,19 +51,16 @@ class WallFollow():
 
         self.Previous_error = Error
         #print self.tf.allFramesAsString()
-        #self.tf.waitForTransform("chassis", "left_front_wheel", rospy.Time(0), rospy.Duration(.1))
-
-        self.Transform = self.tf.lookupTransform("base_link", "map", rospy.Time(0))[0]
-        print self.Target_distance
-        print self.Transform , self.Transform_Start
-        #print Target_angle
+        #print self.Dist_Start, Target_angle, self.Target_distance
         drive_msg_stamped = AckermannDriveStamped()
         drive_msg = AckermannDrive()
-        if -0.04 < Target_angle < 0.04 and FD > self.Wall_distance:
+        if -0.04 < Target_angle < 0.04 and FD > self.Wall_distance and move:
             global SPEED
             drive_msg.speed = SPEED * SPEED_INCREMENT
-        else:
+        elif move:
             drive_msg.speed = SPEED
+        else:
+            drive_msg.speed = 0
 
         drive_msg.steering_angle = Target_angle
         drive_msg_stamped.drive = drive_msg
@@ -135,8 +128,21 @@ class WallFollow():
             self.Target_distance = (self.Wall_distance)/2
             self.tf.waitForTransform("base_link", "map", rospy.Time(0), rospy.Duration(.5))
             self.Transform_Start = self.tf.lookupTransform("base_link", "map", rospy.Time(0))[0]
+            self.Direction = "Left"
+            self.Flag = 0
             self.One_time = False
-
+          
+        self.Transform = self.tf.lookupTransform("base_link", "map", rospy.Time(0))[0]
+        self.Dist_Start = math.floor(math.sqrt((self.Transform[0])**2 + (self.Transform[1])**2))
+        if self.Flag == 0 and self.Dist_Start > 1:
+            self.Flag += 1
+        elif self.Flag == 1 and self.Dist_Start == 0:
+            self.Direction = "Right"
+            self.Flag += 1
+        elif self.Flag == 2 and self.Dist_Start > 1:
+            self.Flag += 1
+        elif self.Flag == 3 and self.Dist_Start == 0:
+            self.Direction = ""
         #print Left_distance , Right_distance, Front_distance
         self.control(Right_distance, Left_distance, Front_distance)
         
