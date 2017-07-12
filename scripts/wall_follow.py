@@ -23,6 +23,7 @@ class WallFollow():
         self.Previous_error = 0
         self.Data_size_front_S = 250
         self.Data_size_sides_S = 320
+        self.Safe_distance = .7
         self.Wall_distance = 0
         self.One_time = True 
 
@@ -71,105 +72,59 @@ class WallFollow():
         drive_msg.steering_angle = Target_angle
         drive_msg_stamped.drive = drive_msg
         self.pub.publish(drive_msg_stamped)
-    # Sign depends on left or right (1 or -1)   
-    # Right = 1
-    # Left = -1
-    def Average_Filter(self, Data_size, Start_index, ranges, angles, Sign):
-        for i in range(Data_size):
-            if i == 0:
-                average = ranges[Start_index] * -np.sin(angles[Start_index]) * Sign
-            else:
-                Start_index += 1 * Sign
-                average += ranges[Start_index] * -np.sin(angles[Start_index]) * Sign
-            average = average/Data_size       
-        return average              
 
     def reading(self, msg):
         #print msg.ranges
         max_a = msg.angle_max
         min_a = msg.angle_min
         a_inc = msg.angle_increment
-        Safe_distance = .7
         Data_size_front = 100
-        Data_size_sides = 320
         Data_size_left = 320
         Data_size_right = 320
         Angle_List = []
         Ranges_List = []
 
-        #Create list of angles
+        #Create list of angles and ranges
         for i in range(len(msg.ranges)):
             Angle_List.append(a_inc * i + min_a) 
             Ranges_List.append(msg.ranges[i])
         
-        #Filter  for the nex filter (no wall)
-        '''
+        #Filtering and dereminating the laser scaner
         for i in range(self.Data_size_sides_S):
             if i == 0:
-                RD = int(((-np.pi/2 + max_a)/a_inc) - 70)
-                LD = int(((np.pi/2 - max_a)/a_inc) - 70)
-            else:
-                if Ranges_List[RD] > 9.9:
-                    del Ranges_List[RD]
-                    del Angle_List[RD]
-                    Data_size_right -= 1
-                else:
-                    RD += 1
-                if Ranges_List[LD] > 9.9:
-                    del Ranges_List[LD]
-                    del Angle_List[LD]
-                    Data_size_left -= 1
-                else:
-                    LD -= 1
-        
-        RD = int(((-np.pi/2 + max_a)/a_inc) - 70)
-        LD = int(((np.pi/2 - max_a)/a_inc) - 70)
-        FD = int(max_a/a_inc) - (Data_size_front/2)
-        '''  
-        # Sign depends on left or right (1 or -1)   
-        # Right = 1
-        # Left = -1
-        '''
-        Right_distance = self.Average_Filter(Data_size_right, RD, Ranges_List, Angle_List, 1)
-        Left_distance = self.Average_Filter(Data_size_left, LD, Ranges_List, Angle_List, -1)
-        Front_distance = self.Average_Filter(Data_size_front, FD, Ranges_List, Angle_List, 1)  
-        '''      
-        #print Left_distance , Right_distance, Front_distance
-        # Trying to get an average of values insead of just 3 laser scans 
-        #print a_inc
-        
-        for i in range(self.Data_size_sides_S):
-            if i == 0:
-                RD = int(((-np.pi/2 + max_a)/a_inc) - 70)
-                LD = int(((np.pi/2 - max_a)/a_inc) - 70)
-                FD = int((len(msg.ranges)/2) - Data_size_front/2)
-                Right_distance = Ranges_List[RD] * -np.sin(Angle_List[RD])
-                Left_distance = Ranges_List[LD] * np.sin(Angle_List[LD])
-                Front_distance = Ranges_List[FD]
+                RDI = int(((-np.pi/2 + max_a)/a_inc) - 70)
+                LDI = int(((np.pi/2 - max_a)/a_inc) - 70)
+                FDI = int((len(msg.ranges)/2) - Data_size_front/2)
+                Right_distance = Ranges_List[RDI] * -np.sin(Angle_List[RDI])
+                Left_distance = Ranges_List[LDI] * np.sin(Angle_List[LDI])
+                Front_distance = Ranges_List[FDI]
                 #print Left_distance , Right_distance, Front_distance
 
             else:
-                RD += 1
-                LD -= 1
-                FD += 1
-                #print RD , LD, FD
+                RDI += 1
+                LDI -= 1
+                FDI += 1
+                RD = Ranges_List[RDI] * -np.sin(Angle_List[RDI])
+                LD = Ranges_List[LDI] * np.sin(Angle_List[LDI])
+                FD = Ranges_List[FDI]
+                #print RDI , LDI, FDI
                 #Filter outer values
                 if i < Data_size_right:
-                    if Ranges_List[RD] > (Right_distance/i) + Safe_distance :
+                    if RD > (Right_distance/i) + self.Safe_distance:
                         Right_distance += Right_distance/i
                     else:
-                        Right_distance += Ranges_List[RD]
+                        Right_distance += RD
                 if i < Data_size_left:
-                    if Ranges_List[LD] > (Left_distance/i) + Safe_distance:
+                    if LD > (Left_distance/i) + self.Safe_distance:
                         Left_distance += Left_distance/i
                     else:
-                        Left_distance += Ranges_List[LD]
+                        Left_distance += LD
 
                 if i < Data_size_front:
-                    if Ranges_List[FD] > (Front_distance/i) + Safe_distance:
+                    if FD > (Front_distance/i) + self.Safe_distance:
                         Front_distance += Front_distance/i
                     else:
-                        Front_distance += Ranges_List[FD]
+                        Front_distance += FD
 
         Right_distance = Right_distance/Data_size_right
         Left_distance = Left_distance/Data_size_left
@@ -185,7 +140,6 @@ class WallFollow():
         #print Left_distance , Right_distance, Front_distance
         self.control(Right_distance, Left_distance, Front_distance)
         
-        #print Angle_List
 
 if __name__=="__main__":
     rospy.init_node("wall_follow")
