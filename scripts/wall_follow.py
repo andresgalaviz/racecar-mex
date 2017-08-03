@@ -2,13 +2,15 @@
 import rospy
 import tf
 import math
+import time
 import numpy as np
 from std_msgs.msg import String, Header
 from ackermann_msgs.msg import AckermannDriveStamped, AckermannDrive
 from sensor_msgs.msg import LaserScan
 
-KP = 0.4
-KD = 1.1
+KP = 1.5
+KD = .7
+KI = .1
 SPEED = 1
 SPEED_INCREMENT = 2.0
 
@@ -26,45 +28,70 @@ class WallFollow():
         self.Safe_distance = .7
         self.Wall_distance = 0
         self.One_time = True
+        self.Error_Integral = 0
 
     def control(self, RD, LD, FD):
-        #Error = LD - RD
         #Use just one wall if there is just one wall
-        if self.Direction == "Right": 
-            Error = self.Target_distance - RD
+        '''if self.Direction == "Right": 
+            Error = self.Test_error
+            #Error = self.Target_distance - RD
             move = True
         elif self.Direction == "Left":
             Error = LD - self.Target_distance
             move = True
+        elif self.Direction == "Center":
+            Error = LD - RD
+            move = True
         else:
             move = False
-        Slope = self.Previous_error - Error
-        Target_angle = Error * KP + Slope * KD
+        '''
+        move = True
+        Error = self.Test_error
+        Slope = (Error - self.Previous_error) / (self.currtm - self.prevtm)
+        self.Error_Integral = (Error + self.Previous_error) / (self.currtm - self.prevtm)
 
-        #print Target_angle
+        if self.Error_Integral > .5:
+            self.Error_Integral = 0
+
+        Target_angle = Error * KP + Slope * KD + self.Error_Integral * KI
+        
         # Avoid wall crashing working on it
+        saturation_value = .6
+
         if FD < (self.Wall_distance/2):
             if Target_angle > 0:
-                Target_angle += .5
+                Target_angle += .05
             else:
-                Target_angle -= .5
+                Target_angle -= .05
+        
+        if Target_angle > saturation_value:
+            Target_angle = saturation_value
 
+        elif Target_angle < -saturation_value:
+            Target_angle = -saturation_value
+
+        print "Target angle = ", Target_angle
         self.Previous_error = Error
-        #print self.tf.allFramesAsString()
-        #print self.Dist_Start, Target_angle, self.Target_distance
         drive_msg_stamped = AckermannDriveStamped()
         drive_msg = AckermannDrive()
+
         if -0.04 < Target_angle < 0.04 and FD > self.Wall_distance and move:
             global SPEED
             drive_msg.speed = SPEED * SPEED_INCREMENT
-        elif move:
+        else :
             drive_msg.speed = SPEED
-        else:
-            drive_msg.speed = 0
 
         drive_msg.steering_angle = Target_angle
         drive_msg_stamped.drive = drive_msg
-        self.pub.publish(drive_msg_stamped)
+
+        #print Target_angle, LD, RD, self.Target_distance
+        if move:
+            self.pub.publish(drive_msg_stamped)
+        else:
+            stop_msg = AckermannDriveStamped()
+            stop_msg.drive.speed = 0
+            stop_msg.header.stamp = rospy.Time.now()
+            self.pub.publish(stop_msg)
 
     def reading(self, msg):
         #print msg.ranges
@@ -81,7 +108,18 @@ class WallFollow():
         for i in range(len(msg.ranges)):
             Angle_List.append(a_inc * i + min_a) 
             Ranges_List.append(msg.ranges[i])
-        
+        #average
+        Average = np.average(np.array(msg.ranges))
+        Stand_deviation = np.std(np.array(msg.ranges))
+        #higher value location
+        threshold = []
+        for i in range(len(msg.ranges)):
+            if Ranges_List[i] > Average:
+                threshold.append(i)
+        Idex_average = np.average(np.array(threshold))
+        #print " Index Average = ", Idex_average - 540
+        self.Test_error = (Idex_average - 540)/540
+
         #Filtering and dereminating the laser scaner
         for i in range(self.Data_size_sides_S):
             if i == 0:
@@ -125,12 +163,14 @@ class WallFollow():
         
         if self.One_time:
             self.Wall_distance = Left_distance + Right_distance
-            self.Target_distance = (self.Wall_distance)/2
+            self.Target_distance = (self.Wall_distance)/2 - (self.Wall_distance *.1)
             self.tf.waitForTransform("base_link", "map", rospy.Time(0), rospy.Duration(.5))
             self.Transform_Start = self.tf.lookupTransform("base_link", "map", rospy.Time(0))[0]
-            self.Direction = "Left"
+            self.Direction = "Center"
             self.Flag = 0
             self.One_time = False
+            self.currtm = time.time()
+            self.prevtm = self.currtm
           
         self.Transform = self.tf.lookupTransform("base_link", "map", rospy.Time(0))[0]
         self.Dist_Start = math.floor(math.sqrt((self.Transform[0])**2 + (self.Transform[1])**2))
@@ -138,14 +178,16 @@ class WallFollow():
             self.Flag += 1
         elif self.Flag == 1 and self.Dist_Start == 0:
             self.Direction = "Right"
+            self.Error_Integral = 0
             self.Flag += 1
         elif self.Flag == 2 and self.Dist_Start > 1:
             self.Flag += 1
         elif self.Flag == 3 and self.Dist_Start == 0:
             self.Direction = ""
         #print Left_distance , Right_distance, Front_distance
+        self.currtm = time.time()
         self.control(Right_distance, Left_distance, Front_distance)
-        
+        self.prevtm = self.currtm
 
 if __name__=="__main__":
     rospy.init_node("wall_follow")
