@@ -37,12 +37,11 @@ class WallFollow():
         self.sub_ar = rospy.Subscriber("/ar_pose_marker", AlvarMarkers, self.ar, queue_size = 1)
         self.sub_zed = rospy.Subscriber("/zed/rgb/image_rect_color",Image, self.reading_zed, queue_size = 1)
         
-        self.Target_distance = 0
+        self.Target_distance = .6
         self.Previous_error = 0
         self.Data_size_front_S = 250
         self.Data_size_sides_S = 270
         self.Safe_distance = .45
-        self.Wall_distance = 0
         self.One_time = True
         self.Error_Integral = 0
         self.Direction = "Center"
@@ -57,7 +56,7 @@ class WallFollow():
                 KP = 1.2
                 KD = .4
                 KI = .0
-            elif marker.markers[0].id == 21 and marker.markers[0].pose.pose.position.z < .8:
+            elif marker.markers[0].id == 29 and marker.markers[0].pose.pose.position.z < .8:
                 MASTER = "Laser"
                 KP = 1.2
                 KD = .4
@@ -69,7 +68,8 @@ class WallFollow():
                 KD = 0
                 KI = 0
                 self.Test_error = 0
-            
+            elif  marker.markers[0].id == 23 and marker.markers[0].pose.pose.position.z < .9:
+                MASTER = "WALL"
 
             print MASTER, SPEED, marker.markers[0].id, marker.markers[0].pose.pose.position.z
              
@@ -92,6 +92,7 @@ class WallFollow():
             elif self.Direction == "Vision":
                 Error = self.Vision_error 
                 move = True
+
         else:   
             Error = 0
             move = False
@@ -131,12 +132,12 @@ class WallFollow():
         drive_msg = AckermannDrive()
         if MASTER == "Vision":
             SPEED = 1.5
-        elif MASTER == "Laser":
+        elif MASTER == "Laser" or MASTER == "WALL":
             SPEED = 2.25
         elif MASTER == "19":
             SPEED = 1     
         print SPEED     
-        if -0.07 < Target_angle < 0.07 and FD > self.Wall_distance and move:
+        if -0.07 < Target_angle < 0.07 and FD > .8 and move:
             drive_msg.speed = SPEED * SPEED_INCREMENT
         else :
             drive_msg.speed = SPEED
@@ -174,12 +175,6 @@ class WallFollow():
                 for j in range(width):
                     if mask[i][j] == 255:
                         threshhold.append(j)
-            '''
-            for i in range(width):
-                if mask[680][i] == 255:
-                    threshhold.append(i)
-            print threshhold        
-            '''
             print "B"
             if threshhold == []:
                 Idex_average = 640
@@ -200,8 +195,8 @@ class WallFollow():
             self.prevtm = self.currtm        
         else:
             return
+
     def reading(self, msg):
-        #print msg.ranges
         max_a = msg.angle_max
         min_a = msg.angle_min
         a_inc = msg.angle_increment
@@ -210,6 +205,10 @@ class WallFollow():
         Data_size_right = 270
         Angle_List = []
         Ranges_List = []
+        if self.One_time:
+            self.One_time = False
+            self.currtm = time.time()
+            self.prevtm = self.currtm
         if MASTER == "Vision":
             self.Direction = "Vision"
             self.move = True
@@ -224,8 +223,7 @@ class WallFollow():
             Stand_deviation = np.std(np.array(Ranges_List))
             #higher value location
             threshold = []
-        elif MASTER == "Laser" or MASTER == "19" :
-            self.Direction = "Center"
+        elif MASTER == "Laser" or MASTER == "19" or MASTER = "WALL" :
             self.move = True
             #Create list of angles and ranges
             for i in range(60, len(msg.ranges)-60):
@@ -242,97 +240,73 @@ class WallFollow():
             for i in range(len(Ranges_List)):
                 if Ranges_List[i] > Average:
                     threshold.append(i)
-            #decition making
-            '''
-        spikes = [1]
-            spikes_idex = [0]
-            x = 0
-            for i in range(len(threshold) - 1):
-                if threshold[i] + 1 == threshold[i+1]:
-                    spikes[x] =+ 1
-                else:
-                    if i < len(threshold):
-                        spikes.append(1)
-                        spikes_idex.append(i+1)
-                    x =+ 1
-            mayor = 0
-            for i in range(len(spikes)):
-                if spikes[mayor] < spikes[i]:
-                    mayor = i
-            Idex_average = 0
-            
-            for i in range(spikes_idex[mayor-1], spikes_idex[mayor]):
-                Idex_average =+ threshold[i] 
-            Idex_average = Idex_average/spikes[mayor]
-            '''
+
             Idex_average = np.average(np.array(threshold))
             
             #print " Index Average = ", Idex_average - 470
             self.Test_error = (Idex_average - 460)/460
-
-            #Filtering and dereminating the laser scaner
-            for i in range(self.Data_size_sides_S):
-                if i == 0:
-                    RDI = int(((-np.pi/2 + max_a)/a_inc) - 70)
-                    #LDI = -int(((np.pi/2 + max_a)/a_inc) - 70)
-                    LDI = 1080-Data_size_left
-                    FDI = int((len(Ranges_List)/2) - Data_size_front/2)
-                    Right_distance = Ranges_List[RDI] * -np.sin(Angle_List[RDI])
-                    Left_distance = Ranges_List[LDI] * np.sin(Angle_List[LDI])
-                    Front_distance = Ranges_List[FDI]
-                    
-                    #print Left_distance , Right_distance, Front_distance
-
-                else:
-                    RDI += 1
-                    LDI -= 1
-                    FDI += 1
-                    RD = Ranges_List[RDI] * -np.sin(Angle_List[RDI])
-                    LD = Ranges_List[LDI] * np.sin(Angle_List[LDI])
-                    FD = Ranges_List[FDI]
-                    #print RDI , LDI, FDI
-                    #Filter outer values
-                    if i < Data_size_right:
-                        if RD > (Right_distance/i) + self.Safe_distance:
-                            Right_distance += Right_distance/i
-                        else:
-                            Right_distance += RD
-                    if i < Data_size_left:
-                        if LD > (Left_distance/i) + self.Safe_distance:
-                            Left_distance += Left_distance/i
-                        else:
-                            Left_distance += LD
-
-                    if i < Data_size_front:
-                        if FD > (Front_distance/i) + self.Safe_distance:
-                            Front_distance += Front_distance/i
-                        else:
-                            Front_distance += FD
-
-            Right_distance = Right_distance/Data_size_right
-            Left_distance = Left_distance/Data_size_left
-            Front_distance = Front_distance/Data_size_front
-            
-            if self.One_time:
-                self.Wall_distance = Left_distance + Right_distance
-                self.Target_distance = .6
-                # self.Target_distance = (self.Wall_distance)/2 - (self.Wall_distance *.1)
-                #self.tf.waitForTransform("base_link", "map", rospy.Time(0), rospy.Duration(.5))
-                #self.Transform_Start = self.tf.lookupTransform("base_link", "map", rospy.Time(0))[0]
-                #self.Direction = "Right"
-                self.Flag = 0
-                self.One_time = False
+            if MASTER == "Laser" or MASTER == "19":
+                self.Direction = "Center
                 self.currtm = time.time()
+                self.control(0, 0, 0)
                 self.prevtm = self.currtm
+                #Filtering and dereminating the laser scaner
+            else:
+                for i in range(self.Data_size_sides_S):
+                    if i == 0:
+                        RDI = int(((-np.pi/2 + max_a)/a_inc) - 70)
+                        #LDI = -int(((np.pi/2 + max_a)/a_inc) - 70)
+                        LDI = 1080-Data_size_left
+                        FDI = int((len(Ranges_List)/2) - Data_size_front/2)
+                        Right_distance = Ranges_List[RDI] * -np.sin(Angle_List[RDI])
+                        Left_distance = Ranges_List[LDI] * np.sin(Angle_List[LDI])
+                        Front_distance = Ranges_List[FDI]
+                        
+                        #print Left_distance , Right_distance, Front_distance
 
-            self.currtm = time.time()
-            self.control(Right_distance, Left_distance, Front_distance)
-            self.prevtm = self.currtm
+                    else:
+                        RDI += 1
+                        LDI -= 1
+                        FDI += 1
+                        RD = Ranges_List[RDI] * -np.sin(Angle_List[RDI])
+                        LD = Ranges_List[LDI] * np.sin(Angle_List[LDI])
+                        FD = Ranges_List[FDI]
+                        #print RDI , LDI, FDI
+                        #Filter outer values
+                        if i < Data_size_right:
+                            if RD > (Right_distance/i) + self.Safe_distance:
+                                Right_distance += Right_distance/i
+                            else:
+                                Right_distance += RD
+                        if i < Data_size_left:
+                            if LD > (Left_distance/i) + self.Safe_distance:
+                                Left_distance += Left_distance/i
+                            else:
+                                Left_distance += LD
+
+                        if i < Data_size_front:
+                            if FD > (Front_distance/i) + self.Safe_distance:
+                                Front_distance += Front_distance/i
+                            else:
+                                Front_distance += FD
+
+                Right_distance = Right_distance/Data_size_right
+                Left_distance = Left_distance/Data_size_left
+                Front_distance = Front_distance/Data_size_front
+                if Right_distance > 1.3:
+                    self.Direction = "Left"
+                elif Left_distance > 1.3:
+                    self.Direction = "Right"
+
+
+                self.currtm = time.time()
+                self.control(Right_distance, Left_distance, Front_distance)
+                self.prevtm = self.currtm           
+
         else:
             return
 
 if __name__=="__main__":
     rospy.init_node("wall_follow")
-    #cap = cv2.VideoCapture(0)
     WallFollow()
     rospy.spin()
