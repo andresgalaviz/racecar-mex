@@ -27,9 +27,9 @@ SPEED = 2.2
 SPEED_INCREMENT = 1.2
 SPEED_DEC =1.5
 SPEED_MAX = SPEED
-#MASTER = "Vision"
-MASTER = "Laser"
-
+MASTER = "Vision"
+#MASTER = "Laser"
+#MASTER = "WALL"
 class WallFollow():
     def __init__(self):
         self.pub = rospy.Publisher("/ackermann_cmd_mux/input/teleop", AckermannDriveStamped, queue_size =1 )
@@ -40,7 +40,7 @@ class WallFollow():
         self.Target_distance = .6
         self.Previous_error = 0
         self.Data_size_front_S = 250
-        self.Data_size_sides_S = 270
+        
         self.Safe_distance = .45
         self.One_time = True
         self.Error_Integral = 0
@@ -51,12 +51,12 @@ class WallFollow():
     def ar (self, marker):
         global MASTER, SPEED, KP, KD , KI
         if len(marker.markers) > 0 :
-            if marker.markers[0].id == 20 and marker.markers[0].pose.pose.position.z < .8:
+            if marker.markers[0].id == 29  and marker.markers[0].pose.pose.position.z < .5:
                 MASTER = "Vision"
                 KP = 1.2
                 KD = .4
                 KI = .0
-            elif marker.markers[0].id == 29 and marker.markers[0].pose.pose.position.z < .8:
+            elif marker.markers[0].id == 21 and marker.markers[0].pose.pose.position.z < .8:
                 MASTER = "Laser"
                 KP = 1.2
                 KD = .4
@@ -131,9 +131,9 @@ class WallFollow():
         drive_msg_stamped = AckermannDriveStamped()
         drive_msg = AckermannDrive()
         if MASTER == "Vision":
-            SPEED = 1.5
+            SPEED = 1
         elif MASTER == "Laser" or MASTER == "WALL":
-            SPEED = 2.25
+            SPEED = 1.5
         elif MASTER == "19":
             SPEED = 1     
         print SPEED     
@@ -223,7 +223,7 @@ class WallFollow():
             Stand_deviation = np.std(np.array(Ranges_List))
             #higher value location
             threshold = []
-        elif MASTER == "Laser" or MASTER == "19" or MASTER = "WALL" :
+        elif MASTER == "Laser" or MASTER == "19" or MASTER == "WALL" :
             self.move = True
             #Create list of angles and ranges
             for i in range(60, len(msg.ranges)-60):
@@ -246,7 +246,7 @@ class WallFollow():
             #print " Index Average = ", Idex_average - 470
             self.Test_error = (Idex_average - 460)/460
             if MASTER == "Laser" or MASTER == "19":
-                self.Direction = "Center
+                self.Direction = "Center"
                 self.currtm = time.time()
                 self.control(0, 0, 0)
                 self.prevtm = self.currtm
@@ -293,11 +293,10 @@ class WallFollow():
                 Right_distance = Right_distance/Data_size_right
                 Left_distance = Left_distance/Data_size_left
                 Front_distance = Front_distance/Data_size_front
-                if Right_distance > 1.3:
+                if Right_distance > 1.3 and Right_distance > Left_distance: 
                     self.Direction = "Left"
-                elif Left_distance > 1.3:
+                elif Left_distance > 1.3 and Right_distance < Left_distance:
                     self.Direction = "Right"
-
 
                 self.currtm = time.time()
                 self.control(Right_distance, Left_distance, Front_distance)
