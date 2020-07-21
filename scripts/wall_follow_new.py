@@ -10,7 +10,7 @@ from ackermann_msgs.msg import AckermannDriveStamped, AckermannDrive
 from sensor_msgs.msg import LaserScan, Image
 from cv_bridge import CvBridge
 from ar_track_alvar_msgs.msg import AlvarMarkers
-
+from timeit import default_timer as timer
 
 #Center
 KP = 1.2
@@ -27,20 +27,20 @@ SPEED = 2.2
 SPEED_INCREMENT = 1.2
 SPEED_DEC =1.5
 SPEED_MAX = SPEED
-#MASTER = "Vision"
+# MASTER = "Vision"
 MASTER = "Laser"
-
+#MASTER = "WALL"
 class WallFollow():
     def __init__(self):
         self.pub = rospy.Publisher("/ackermann_cmd_mux/input/teleop", AckermannDriveStamped, queue_size =1 )
         self.sub = rospy.Subscriber("/scan",LaserScan, self.reading, queue_size = 1)
         self.sub_ar = rospy.Subscriber("/ar_pose_marker", AlvarMarkers, self.ar, queue_size = 1)
         self.sub_zed = rospy.Subscriber("/zed/rgb/image_rect_color",Image, self.reading_zed, queue_size = 1)
-        
+        #self.sub_controll = rospy.Subscriber("", ,self.contoller, queue_size=1)
         self.Target_distance = .6
         self.Previous_error = 0
         self.Data_size_front_S = 250
-        self.Data_size_sides_S = 270
+        
         self.Safe_distance = .45
         self.One_time = True
         self.Error_Integral = 0
@@ -48,37 +48,52 @@ class WallFollow():
         self.Vision_error = 0
         self.bridge = CvBridge()
         self.move = True
+        self.NewTime = True
+        self.NewMode = ""
+        self.switchAction = 1000000000
+    def contoller (self, click):
+        if click:
+            self.kill_click == True
+
     def ar (self, marker):
         global MASTER, SPEED, KP, KD , KI
         if len(marker.markers) > 0 :
-            if marker.markers[0].id == 20 and marker.markers[0].pose.pose.position.z < .8:
-                MASTER = "Vision"
-                KP = 1.2
-                KD = .4
-                KI = .0
-            elif marker.markers[0].id == 29 and marker.markers[0].pose.pose.position.z < .8:
-                MASTER = "Laser"
-                KP = 1.2
-                KD = .4
-                KI = .02
-                self.Test_error = 0
+            print "ENTERING", MASTER, SPEED, marker.markers[0].id, marker.markers[0].pose.pose.position.z
+            if marker.markers[0].id == 20  and marker.markers[0].pose.pose.position.z < 0.5:
+                if(self.NewTime):
+                    self.switchAction = timer() + 1
+                    self.NewTime = False
+                    self.NewMode = "Vision"
+                    print "Assinging new vision timer at: ", timer()
+            elif marker.markers[0].id == 21 and marker.markers[0].pose.pose.position.z < .5:
+                if(self.NewTime):
+                    self.switchAction = timer() + 1.5
+                    self.NewTime = False
+                    self.NewMode = "Laser"
+                    print "Assinging new vision timer at: ", timer()
             elif marker.markers[0].id == 19 and marker.markers[0].pose.pose.position.z < .9:
                 MASTER = "19"
                 KP = 1.2
                 KD = 0
                 KI = 0
                 self.Test_error = 0
-            elif  marker.markers[0].id == 23 and marker.markers[0].pose.pose.position.z < .9:
+            elif  marker.markers[0].id == 23 and marker.markers[0].pose.pose.position.z < .7:
                 MASTER = "WALL"
+                KP = 1.2
+                KD = .4
+                KI = .02
+                self.Test_error = 0
+            elif marker.markers[0].id == 16 and marker.markers[0].pose.pose.position.z < .7:
+                if(self.NewTime):
+                    self.switchAction = timer() + 2.5
+                    self.NewTime = False
+                    self.NewMode = "Finish"
+                    print "Assinging new vision timer at: ", timer()
 
-            print MASTER, SPEED, marker.markers[0].id, marker.markers[0].pose.pose.position.z
-             
         #print mrker.markers.id, marker.markers.pose.position.z
     def control(self, RD, LD, FD):
         #Use just one wall if there is just one wall
-        print self.Direction, self.move
         if self.move:
-            print self.Direction , MASTER
             if self.Direction == "Right": 
                 #Error = self.Test_error
                 Error = self.Target_distance - RD
@@ -92,12 +107,11 @@ class WallFollow():
             elif self.Direction == "Vision":
                 Error = self.Vision_error 
                 move = True
-
         else:   
             Error = 0
             move = False
             self.move = True
-        print move
+
         Slope = (Error - self.Previous_error) / (self.currtm - self.prevtm)
         self.Error_Integral = (Error + self.Previous_error) / (self.currtm - self.prevtm)
 
@@ -111,7 +125,6 @@ class WallFollow():
         global SPEED
         if FD < (.4):
             if Target_angle > 0:
-                
                 SPEED = SPEED_DEC
                 Target_angle += .05
             else:
@@ -131,12 +144,11 @@ class WallFollow():
         drive_msg_stamped = AckermannDriveStamped()
         drive_msg = AckermannDrive()
         if MASTER == "Vision":
-            SPEED = 1.5
+            SPEED = 1.25
         elif MASTER == "Laser" or MASTER == "WALL":
-            SPEED = 2.25
+            SPEED = 2.2
         elif MASTER == "19":
-            SPEED = 1     
-        print SPEED     
+            SPEED = 1        
         if -0.07 < Target_angle < 0.07 and FD > .8 and move:
             drive_msg.speed = SPEED * SPEED_INCREMENT
         else :
@@ -144,15 +156,17 @@ class WallFollow():
 
         drive_msg.steering_angle = Target_angle
         drive_msg_stamped.drive = drive_msg
-        print self.Direction, self.move, move
         #print Target_angle, LD, RD, self.Target_distance
-        if move:
-            self.pub.publish(drive_msg_stamped)
-        else:
+        if move == False or self.kill_click:
             stop_msg = AckermannDriveStamped()
             stop_msg.drive.speed = 0
             stop_msg.header.stamp = rospy.Time.now()
+            self.kill_click == False
             self.pub.publish(stop_msg)
+
+        else:
+            self.pub.publish(drive_msg_stamped)
+
 
     def reading_zed(self, msg):
         if MASTER == "Vision":
@@ -168,23 +182,19 @@ class WallFollow():
 
             width = len(mask[0])
             height = len(mask)
-            print "W =", width, " H = " , height
+            # print "W =", width, " H = " , height
             threshhold = []
-            print "A", height/4 ,height*3/4, width
+            # print "A", height/4 ,height*3/4, width
             for i in (239 ,479, 599, 719):
                 for j in range(width):
                     if mask[i][j] == 255:
                         threshhold.append(j)
-            print "B"
             if threshhold == []:
                 Idex_average = 640
             else:
                 Idex_average = np.average(np.array(threshhold))
-            
-            print " Index Average = ", Idex_average - 640
             self.Vision_error = -(Idex_average - 640)/640
-            print "Vision  error= ", self.Vision_error
-            #print self.Vision_error
+            
             if self.One_time:
                 self.One_time = False
                 self.currtm = time.time()
@@ -197,6 +207,24 @@ class WallFollow():
             return
 
     def reading(self, msg):
+        global MASTER
+        if(self.switchAction < timer() and not self.NewTime):
+            if self.NewMode == "Vision":
+                MASTER = "Vision"
+                KP = 1.2
+                KD = .4
+                KI = .0
+                self.NewTime = True
+                print "Switched with timer", timer()
+            elif self.NewMode == "Laser":
+                MASTER = "Laser"
+                KP = 1.2
+                KD = .4
+                KI = .02
+                self.NewTime = True
+                self.Test_error = 0
+            elif self.NewMode == "Finish":
+                MASTER = "Finish"
         max_a = msg.angle_max
         min_a = msg.angle_min
         a_inc = msg.angle_increment
@@ -209,44 +237,32 @@ class WallFollow():
             self.One_time = False
             self.currtm = time.time()
             self.prevtm = self.currtm
+        #Create list of angles and ranges
+        for i in range(60, len(msg.ranges)-60):
+            if (i >= 535 and i <= 545) and msg.ranges[i] < self.Safe_distance :
+                self.move = False
+            Angle_List.append(a_inc * i + min_a) 
+            Ranges_List.append(msg.ranges[i])    
+
         if MASTER == "Vision":
             self.Direction = "Vision"
             self.move = True
-            #Create list of angles and ranges
-            for i in range(60, len(msg.ranges)-60):
-                if (i >= 535 and i <= 545) and msg.ranges[i] < self.Safe_distance :
-                    self.move = False
-                Angle_List.append(a_inc * i + min_a) 
-                Ranges_List.append(msg.ranges[i])
-            #average
-            Average = np.average(np.array(Ranges_List))
-            Stand_deviation = np.std(np.array(Ranges_List))
-            #higher value location
-            threshold = []
-        elif MASTER == "Laser" or MASTER == "19" or MASTER = "WALL" :
+        elif MASTER == "Laser" or MASTER == "19" or MASTER == "WALL" :
             self.move = True
-            #Create list of angles and ranges
-            for i in range(60, len(msg.ranges)-60):
-                if (i >= 535 and i <= 545) and msg.ranges[i] < self.Safe_distance :
-                    self.move = False
-                Angle_List.append(a_inc * i + min_a) 
-                Ranges_List.append(msg.ranges[i])
             #average
             Average = np.average(np.array(Ranges_List))
             Stand_deviation = np.std(np.array(Ranges_List))
             #higher value location
             threshold = []
-
             for i in range(len(Ranges_List)):
                 if Ranges_List[i] > Average:
                     threshold.append(i)
 
             Idex_average = np.average(np.array(threshold))
-            
-            #print " Index Average = ", Idex_average - 470
             self.Test_error = (Idex_average - 460)/460
+
             if MASTER == "Laser" or MASTER == "19":
-                self.Direction = "Center
+                self.Direction = "Center"
                 self.currtm = time.time()
                 self.control(0, 0, 0)
                 self.prevtm = self.currtm
@@ -271,7 +287,6 @@ class WallFollow():
                         RD = Ranges_List[RDI] * -np.sin(Angle_List[RDI])
                         LD = Ranges_List[LDI] * np.sin(Angle_List[LDI])
                         FD = Ranges_List[FDI]
-                        #print RDI , LDI, FDI
                         #Filter outer values
                         if i < Data_size_right:
                             if RD > (Right_distance/i) + self.Safe_distance:
@@ -293,16 +308,19 @@ class WallFollow():
                 Right_distance = Right_distance/Data_size_right
                 Left_distance = Left_distance/Data_size_left
                 Front_distance = Front_distance/Data_size_front
-                if Right_distance > 1.3:
+                if Right_distance > 1.3 and Right_distance > Left_distance: 
                     self.Direction = "Left"
-                elif Left_distance > 1.3:
+                elif Left_distance > 1.3 and Right_distance < Left_distance:
                     self.Direction = "Right"
-
 
                 self.currtm = time.time()
                 self.control(Right_distance, Left_distance, Front_distance)
-                self.prevtm = self.currtm           
-
+                self.prevtm = self.currtm  
+        elif MASTER == "Finish":
+            self.move = False
+            self.currtm = time.time()
+            self.control(0, 0, 0)
+            self.prevtm = self.currtm
         else:
             return
 
